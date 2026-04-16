@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.SetaMobile.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#d4d8d9</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_seta_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.SetaMobile</item>
+    </style>
+
+</resources>
