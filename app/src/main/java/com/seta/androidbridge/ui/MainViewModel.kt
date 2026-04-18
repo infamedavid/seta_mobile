@@ -5,14 +5,18 @@ import androidx.lifecycle.viewModelScope
 import com.seta.androidbridge.domain.contracts.CameraEngine
 import com.seta.androidbridge.domain.contracts.HttpBridgeService
 import com.seta.androidbridge.domain.contracts.Logger
+import com.seta.androidbridge.domain.contracts.OverlayHistoryRepository
 import com.seta.androidbridge.domain.contracts.SessionStateStore
 import com.seta.androidbridge.domain.models.AppError
+import com.seta.androidbridge.domain.models.CaptureRequestSource
+import com.seta.androidbridge.domain.models.OverlayHistoryEntry
 import com.seta.androidbridge.domain.models.PreviewProfiles
 import com.seta.androidbridge.domain.models.SettingDefinition
 import com.seta.androidbridge.domain.models.SettingValue
 import com.seta.androidbridge.net.NetworkInfoProvider
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 class MainViewModel(
@@ -20,6 +24,7 @@ class MainViewModel(
     private val httpBridgeService: HttpBridgeService,
     private val sessionStateStore: SessionStateStore,
     private val networkInfoProvider: NetworkInfoProvider,
+    private val overlayHistoryRepository: OverlayHistoryRepository,
     private val logger: Logger,
 ) : ViewModel() {
 
@@ -29,6 +34,19 @@ class MainViewModel(
         ),
     )
     val uiState: StateFlow<MainUiState> = _uiState
+
+    init {
+        viewModelScope.launch {
+            overlayHistoryRepository.historyFlow.collect { history ->
+                _uiState.value = recalculateOverlayState(
+                    _uiState.value.copy(
+                        overlayHistoryEntries = history,
+                        overlayHistoryCount = history.size,
+                    ),
+                )
+            }
+        }
+    }
 
     fun initialize() {
         _uiState.value = _uiState.value.copy(cameraPermissionGranted = true)
@@ -73,7 +91,7 @@ class MainViewModel(
 
     fun onCaptureClicked() {
         viewModelScope.launch {
-            cameraEngine.captureJpeg()
+            cameraEngine.captureJpeg(CaptureRequestSource.APP_DEBUG)
                 .onFailure { handleFailure("capture failed", it) }
 
             syncFromSession()
@@ -99,6 +117,69 @@ class MainViewModel(
             refreshCameraSettings()
             syncFromSession()
         }
+    }
+
+    fun onOverlayEnabledChanged(enabled: Boolean) {
+        _uiState.value = recalculateOverlayState(
+            _uiState.value.copy(overlayEnabled = enabled),
+        )
+    }
+
+    fun onOverlayOpacityChanged(value: Float) {
+        _uiState.value = recalculateOverlayState(
+            _uiState.value.copy(
+                overlayOpacity = value.coerceIn(0f, 1f),
+            ),
+        )
+    }
+
+    fun onOverlayStackDepthSelected(depth: OverlayStackDepth) {
+        _uiState.value = recalculateOverlayState(
+            _uiState.value.copy(overlayStackDepth = depth),
+        )
+    }
+
+    fun onOverlayModeSelected(mode: OverlayMode) {
+        val currentState = _uiState.value
+        val manualSelection = when (mode) {
+            OverlayMode.AUTO -> currentState.selectedOverlayCaptureId
+            OverlayMode.MANUAL -> currentState.selectedOverlayCaptureId
+                ?: currentState.activeOverlayCaptureId
+                ?: currentState.overlayHistoryEntries.firstOrNull()?.captureId
+        }
+
+        _uiState.value = recalculateOverlayState(
+            currentState.copy(
+                overlayMode = mode,
+                selectedOverlayCaptureId = manualSelection,
+            ),
+        )
+    }
+
+    fun onSelectOlderOverlayClicked() {
+        val state = _uiState.value
+        if (state.overlayMode != OverlayMode.MANUAL) return
+
+        val history = state.overlayHistoryEntries
+        val currentIndex = history.indexOfFirst { it.captureId == state.activeOverlayCaptureId }
+        if (currentIndex == -1 || currentIndex >= history.lastIndex) return
+
+        _uiState.value = recalculateOverlayState(
+            state.copy(selectedOverlayCaptureId = history[currentIndex + 1].captureId),
+        )
+    }
+
+    fun onSelectNewerOverlayClicked() {
+        val state = _uiState.value
+        if (state.overlayMode != OverlayMode.MANUAL) return
+
+        val history = state.overlayHistoryEntries
+        val currentIndex = history.indexOfFirst { it.captureId == state.activeOverlayCaptureId }
+        if (currentIndex <= 0) return
+
+        _uiState.value = recalculateOverlayState(
+            state.copy(selectedOverlayCaptureId = history[currentIndex - 1].captureId),
+        )
     }
 
     fun onFocusModeSelected(mode: String) {
@@ -169,6 +250,19 @@ class MainViewModel(
             value = SettingValue.IntValue(value.coerceIn(min, max).toInt()),
             failurePrefix = "set white_balance_temperature failed",
         )
+    }
+
+    fun onPurgeOverlayHistoryClicked() {
+        viewModelScope.launch {
+            runCatching {
+                overlayHistoryRepository.purgeHistory()
+            }.onFailure { handleFailure("purge overlay history failed", it) }
+
+            _uiState.value = recalculateOverlayState(
+                _uiState.value.copy(selectedOverlayCaptureId = null),
+            )
+            syncFromSession()
+        }
     }
 
     fun onCameraPermissionDenied() {
@@ -310,6 +404,121 @@ class MainViewModel(
             )
         }
         syncFromSession()
+    }
+
+    private fun recalculateOverlayState(state: MainUiState): MainUiState {
+        val history = state.overlayHistoryEntries
+        val manualSelectedId = when {
+            history.isEmpty() -> null
+            state.overlayMode == OverlayMode.MANUAL -> {
+                val currentSelection = state.selectedOverlayCaptureId
+                when {
+                    currentSelection == null -> history.first().captureId
+                    history.any { it.captureId == currentSelection } -> currentSelection
+                    else -> history.first().captureId
+                }
+            }
+            else -> state.selectedOverlayCaptureId
+        }
+
+        val primaryEntry = resolvePrimaryOverlayEntry(
+            history = history,
+            mode = state.overlayMode,
+            selectedCaptureId = manualSelectedId,
+        )
+
+        val stackEntries = resolveOverlayStackEntries(
+            history = history,
+            mode = state.overlayMode,
+            selectedCaptureId = manualSelectedId,
+            depth = state.overlayStackDepth,
+        )
+
+        val renderLayers = buildOverlayRenderLayers(
+            stackEntries = stackEntries,
+            baseOpacity = state.overlayOpacity,
+            enabled = state.overlayEnabled,
+        )
+
+        val activeIndex = primaryEntry?.let { entry ->
+            history.indexOfFirst { it.captureId == entry.captureId }
+        } ?: -1
+
+        val activeLabel = when {
+            primaryEntry == null -> null
+            state.overlayMode == OverlayMode.AUTO -> {
+                val depthLabel = when (state.overlayStackDepth) {
+                    OverlayStackDepth.SINGLE -> "Single"
+                    OverlayStackDepth.DOUBLE -> "Double"
+                    OverlayStackDepth.TRIPLE -> "Triple"
+                }
+                "$depthLabel auto · ${primaryEntry.fileName}"
+            }
+            else -> "Manual ${activeIndex + 1}/${history.size} · ${primaryEntry.fileName}"
+        }
+
+        return state.copy(
+            overlayHistoryCount = history.size,
+            selectedOverlayCaptureId = manualSelectedId,
+            activeOverlayCaptureId = primaryEntry?.captureId,
+            activeOverlayFilePath = primaryEntry?.absolutePath,
+            activeOverlayLayers = renderLayers,
+            activeOverlayLabel = activeLabel,
+            canSelectNewerOverlay = state.overlayMode == OverlayMode.MANUAL && activeIndex > 0,
+            canSelectOlderOverlay = state.overlayMode == OverlayMode.MANUAL && activeIndex in 0 until history.lastIndex,
+        )
+    }
+
+    private fun resolvePrimaryOverlayEntry(
+        history: List<OverlayHistoryEntry>,
+        mode: OverlayMode,
+        selectedCaptureId: String?,
+    ): OverlayHistoryEntry? {
+        if (history.isEmpty()) return null
+
+        return when (mode) {
+            OverlayMode.AUTO -> history.firstOrNull()
+            OverlayMode.MANUAL -> history.firstOrNull { it.captureId == selectedCaptureId }
+                ?: history.firstOrNull()
+        }
+    }
+
+    private fun resolveOverlayStackEntries(
+        history: List<OverlayHistoryEntry>,
+        mode: OverlayMode,
+        selectedCaptureId: String?,
+        depth: OverlayStackDepth,
+    ): List<OverlayHistoryEntry> {
+        if (history.isEmpty()) return emptyList()
+
+        return when (mode) {
+            OverlayMode.AUTO -> history.take(depth.layerCount)
+            OverlayMode.MANUAL -> {
+                val selectedIndex = history.indexOfFirst { it.captureId == selectedCaptureId }
+                    .takeIf { it >= 0 } ?: 0
+                history.drop(selectedIndex).take(depth.layerCount)
+            }
+        }
+    }
+
+    private fun buildOverlayRenderLayers(
+        stackEntries: List<OverlayHistoryEntry>,
+        baseOpacity: Float,
+        enabled: Boolean,
+    ): List<OverlayRenderLayer> {
+        if (!enabled || baseOpacity <= 0f || stackEntries.isEmpty()) return emptyList()
+
+        val alphaFalloff = listOf(1f, 0.6f, 0.3f)
+
+        return stackEntries
+            .mapIndexed { index, entry ->
+                OverlayRenderLayer(
+                    captureId = entry.captureId,
+                    filePath = entry.absolutePath,
+                    alpha = (baseOpacity * alphaFalloff.getOrElse(index) { 0.2f }).coerceIn(0f, 1f),
+                )
+            }
+            .reversed()
     }
 
     private fun definitionMinAsFloat(definition: SettingDefinition?): Float? {

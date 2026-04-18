@@ -26,8 +26,10 @@ import androidx.lifecycle.LifecycleOwner
 import com.seta.androidbridge.domain.contracts.CameraEngine
 import com.seta.androidbridge.domain.contracts.CaptureRepository
 import com.seta.androidbridge.domain.contracts.Logger
+import com.seta.androidbridge.domain.contracts.OverlayHistoryRepository
 import com.seta.androidbridge.domain.contracts.SessionStateStore
 import com.seta.androidbridge.domain.models.CameraCapabilities
+import com.seta.androidbridge.domain.models.CaptureRequestSource
 import com.seta.androidbridge.domain.models.CapturedImage
 import com.seta.androidbridge.domain.models.FocusModeIds
 import com.seta.androidbridge.domain.models.LensInfo
@@ -51,6 +53,7 @@ class CameraXEngine(
     private val context: Context,
     private val captureRepository: CaptureRepository,
     private val sessionStateStore: SessionStateStore,
+    private val overlayHistoryRepository: OverlayHistoryRepository,
     private val logger: Logger,
 ) : CameraEngine {
 
@@ -210,7 +213,7 @@ class CameraXEngine(
 
     override fun isRemotePreviewRunning(): Boolean = remotePreviewRunning
 
-    override suspend fun captureJpeg(): Result<CapturedImage> = withContext(Dispatchers.IO) {
+    override suspend fun captureJpeg(source: CaptureRequestSource): Result<CapturedImage> = withContext(Dispatchers.IO) {
         runCatching {
             val imageCapture = imageCaptureUseCase ?: error("ImageCapture not ready")
 
@@ -232,7 +235,9 @@ class CameraXEngine(
                     )
                 }
 
-                logger.info("Capture saved with ImageCapture id=${saved.captureId}")
+                recordOverlayHistoryIfNeeded(source, saved)
+
+                logger.info("Capture saved with ImageCapture id=${saved.captureId} source=$source")
                 saved
             } catch (captureError: Throwable) {
                 val fallbackBytes = latestPreviewJpegFrame()
@@ -247,10 +252,27 @@ class CameraXEngine(
                         lastError = null,
                     )
                 }
+                recordOverlayHistoryIfNeeded(source, saved)
+                logger.info("Capture saved with preview fallback id=${saved.captureId} source=$source")
                 saved
             } finally {
                 tempFile.delete()
             }
+        }
+    }
+
+    private suspend fun recordOverlayHistoryIfNeeded(
+        source: CaptureRequestSource,
+        capturedImage: CapturedImage,
+    ) {
+        if (source != CaptureRequestSource.BLENDER_ADDON) {
+            return
+        }
+
+        runCatching {
+            overlayHistoryRepository.recordBlenderCapture(capturedImage)
+        }.onFailure { error ->
+            logger.warn("Failed to record overlay history for ${capturedImage.captureId}: ${error.message}")
         }
     }
 

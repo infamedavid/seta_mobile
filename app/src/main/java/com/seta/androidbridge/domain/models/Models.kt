@@ -76,6 +76,19 @@ data class CapturedImage(
     val timestampEpochMs: Long,
 )
 
+enum class CaptureRequestSource {
+    BLENDER_ADDON,
+    APP_DEBUG,
+}
+
+data class OverlayHistoryEntry(
+    val captureId: String,
+    val fileName: String,
+    val absolutePath: String,
+    val timestampEpochMs: Long,
+    val sessionSequence: Long,
+)
+
 data class PreviewInfo(
     val format: String,
     val endpointPath: String,

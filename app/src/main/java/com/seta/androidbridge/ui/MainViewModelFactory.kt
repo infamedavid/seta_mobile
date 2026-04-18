@@ -14,6 +14,7 @@ class MainViewModelFactory(
             httpBridgeService = container.httpBridgeService,
             sessionStateStore = container.sessionStateStore,
             networkInfoProvider = container.networkInfoProvider,
+            overlayHistoryRepository = container.overlayHistoryRepository,
             logger = container.logger,
         ) as T
     }

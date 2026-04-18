@@ -1,7 +1,25 @@
 package com.seta.androidbridge.ui
 
+import com.seta.androidbridge.domain.models.OverlayHistoryEntry
 import com.seta.androidbridge.domain.models.PreviewProfile
 import com.seta.androidbridge.domain.models.PreviewProfiles
+
+enum class OverlayMode {
+    AUTO,
+    MANUAL,
+}
+
+enum class OverlayStackDepth(val layerCount: Int) {
+    SINGLE(1),
+    DOUBLE(2),
+    TRIPLE(3),
+}
+
+data class OverlayRenderLayer(
+    val captureId: String,
+    val filePath: String,
+    val alpha: Float,
+)
 
 data class MainUiState(
     val cameraPermissionGranted: Boolean = false,
@@ -16,6 +34,19 @@ data class MainUiState(
     val lastCaptureId: String? = null,
     val lastError: String? = null,
     val logs: List<String> = emptyList(),
+    val overlayHistoryCount: Int = 0,
+    val overlayHistoryEntries: List<OverlayHistoryEntry> = emptyList(),
+    val overlayEnabled: Boolean = true,
+    val overlayOpacity: Float = 0f,
+    val overlayMode: OverlayMode = OverlayMode.AUTO,
+    val overlayStackDepth: OverlayStackDepth = OverlayStackDepth.SINGLE,
+    val selectedOverlayCaptureId: String? = null,
+    val activeOverlayCaptureId: String? = null,
+    val activeOverlayFilePath: String? = null,
+    val activeOverlayLayers: List<OverlayRenderLayer> = emptyList(),
+    val activeOverlayLabel: String? = null,
+    val canSelectOlderOverlay: Boolean = false,
+    val canSelectNewerOverlay: Boolean = false,
     val previewProfileId: String = PreviewProfiles.Balanced.id,
     val availablePreviewProfiles: List<PreviewProfile> = PreviewProfiles.All,
 

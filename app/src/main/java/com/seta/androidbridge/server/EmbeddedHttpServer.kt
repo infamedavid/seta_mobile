@@ -5,6 +5,7 @@ import com.seta.androidbridge.domain.contracts.CaptureRepository
 import com.seta.androidbridge.domain.contracts.HttpBridgeService
 import com.seta.androidbridge.domain.contracts.Logger
 import com.seta.androidbridge.domain.contracts.SessionStateStore
+import com.seta.androidbridge.domain.models.CaptureRequestSource
 import com.seta.androidbridge.domain.models.DeviceInfo
 import com.seta.androidbridge.domain.models.SettingDefinition
 import com.seta.androidbridge.domain.models.SettingValue
@@ -156,7 +157,7 @@ class EmbeddedHttpServer(
     }
 
     private fun captureJson(): String = runBlocking {
-        val cap = cameraEngine.captureJpeg().getOrThrow()
+        val cap = cameraEngine.captureJpeg(CaptureRequestSource.BLENDER_ADDON).getOrThrow()
         """{"ok":true,"data":{"captureId":"${cap.captureId}","contentType":"${cap.mimeType}","sizeBytes":${cap.sizeBytes}}}"""
     }
 

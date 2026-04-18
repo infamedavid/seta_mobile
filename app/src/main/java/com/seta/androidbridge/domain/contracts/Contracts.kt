@@ -4,10 +4,13 @@ import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import com.seta.androidbridge.domain.models.AppSessionState
 import com.seta.androidbridge.domain.models.CameraCapabilities
+import com.seta.androidbridge.domain.models.CaptureRequestSource
 import com.seta.androidbridge.domain.models.CapturedImage
+import com.seta.androidbridge.domain.models.OverlayHistoryEntry
 import com.seta.androidbridge.domain.models.PreviewInfo
 import com.seta.androidbridge.domain.models.PreviewProfile
 import com.seta.androidbridge.domain.models.SettingValue
+import kotlinx.coroutines.flow.StateFlow
 
 interface Logger {
     fun info(message: String)
@@ -23,6 +26,14 @@ interface SessionStateStore {
 interface CaptureRepository {
     suspend fun saveJpeg(bytes: ByteArray): Result<CapturedImage>
     suspend fun getCapture(captureId: String): Result<CapturedImage>
+}
+
+interface OverlayHistoryRepository {
+    val historyFlow: StateFlow<List<OverlayHistoryEntry>>
+    fun getHistoryNewestFirst(): List<OverlayHistoryEntry>
+    fun getHistoryCount(): Int
+    suspend fun recordBlenderCapture(capturedImage: CapturedImage)
+    suspend fun purgeHistory()
 }
 
 interface HttpBridgeService {
@@ -43,7 +54,7 @@ interface CameraEngine {
     suspend fun stopRemotePreview(): Result<Unit>
     fun isRemotePreviewRunning(): Boolean
 
-    suspend fun captureJpeg(): Result<CapturedImage>
+    suspend fun captureJpeg(source: CaptureRequestSource): Result<CapturedImage>
 
     suspend fun getCapabilities(): Result<CameraCapabilities>
     suspend fun getAllSettings(): Result<Map<String, SettingValue>>
