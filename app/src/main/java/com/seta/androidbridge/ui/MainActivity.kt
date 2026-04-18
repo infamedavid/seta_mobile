@@ -2,8 +2,10 @@ package com.seta.androidbridge.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -14,6 +16,7 @@ import androidx.activity.viewModels
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,9 +26,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -36,9 +37,9 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -72,6 +74,9 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val PREFS_NAME = "seta_mobile_prefs"
         private const val PREF_ROTATION_LOCK_ENABLED = "rotation_lock_enabled"
+        private const val PLACEHOLDER_GITHUB_URL = "https://example.com/github"
+        private const val PLACEHOLDER_CONTACT_URL = "https://example.com/contact"
+        private const val PLACEHOLDER_DONATE_URL = "https://example.com/donate"
     }
 
     private val viewModel: MainViewModel by viewModels {
@@ -99,6 +104,7 @@ class MainActivity : ComponentActivity() {
 
         val initialRotationLockEnabled = isRotationLockEnabled()
         applyRotationLock(initialRotationLockEnabled)
+        val appVersionName = getAppVersionName()
 
         permissionLauncher.launch(Manifest.permission.CAMERA)
 
@@ -115,6 +121,7 @@ class MainActivity : ComponentActivity() {
 
             var serverMenuOpen by remember { mutableStateOf(false) }
             var cameraMenuOpen by remember { mutableStateOf(false) }
+            var aboutMenuOpen by remember { mutableStateOf(false) }
             var rotationLockEnabled by remember { mutableStateOf(initialRotationLockEnabled) }
             var serverActionPending by remember { mutableStateOf(false) }
             var previewProfilePendingId by remember { mutableStateOf<String?>(null) }
@@ -219,7 +226,10 @@ class MainActivity : ComponentActivity() {
                             FloatingActionButton(
                                 onClick = {
                                     serverMenuOpen = !serverMenuOpen
-                                    if (serverMenuOpen) cameraMenuOpen = false
+                                    if (serverMenuOpen) {
+                                        cameraMenuOpen = false
+                                        aboutMenuOpen = false
+                                    }
                                 },
                                 containerColor = Color(0xFFE5E7E7),
                                 contentColor = Color(0xFF4D4D4D),
@@ -230,12 +240,29 @@ class MainActivity : ComponentActivity() {
                             FloatingActionButton(
                                 onClick = {
                                     cameraMenuOpen = !cameraMenuOpen
-                                    if (cameraMenuOpen) serverMenuOpen = false
+                                    if (cameraMenuOpen) {
+                                        serverMenuOpen = false
+                                        aboutMenuOpen = false
+                                    }
                                 },
                                 containerColor = Color(0xFFE5E7E7),
                                 contentColor = Color(0xFF4D4D4D),
                             ) {
                                 Text("Cam")
+                            }
+
+                            FloatingActionButton(
+                                onClick = {
+                                    aboutMenuOpen = !aboutMenuOpen
+                                    if (aboutMenuOpen) {
+                                        serverMenuOpen = false
+                                        cameraMenuOpen = false
+                                    }
+                                },
+                                containerColor = Color(0xFFE5E7E7),
+                                contentColor = Color(0xFF4D4D4D),
+                            ) {
+                                Text("About")
                             }
                         }
 
@@ -725,9 +752,119 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+
+                        if (aboutMenuOpen) {
+                            Card(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(12.dp)
+                                    .widthIn(min = 300.dp, max = 380.dp),
+                                colors = panelColors,
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            text = "About",
+                                            style = MaterialTheme.typography.titleMedium,
+                                        )
+
+                                        OutlinedButton(
+                                            onClick = { aboutMenuOpen = false },
+                                            modifier = Modifier.heightIn(min = 32.dp),
+                                            colors = outlinedButtonColors,
+                                            border = buttonBorder,
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                        ) {
+                                            Text("Close")
+                                        }
+                                    }
+
+                                    Text(
+                                        text = "Seta",
+                                        style = MaterialTheme.typography.titleLarge,
+                                    )
+
+                                    Text(
+                                        text = "Version: $appVersionName",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+
+                                    Text(
+                                        text = "Android app that establishes an image/video server for the Seta Motion Blender add-on.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+
+                                    Text(
+                                        text = "Seta Mobile is free and open source under the MIT license.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+
+                                    Text(
+                                        text = "Developed by InfameDavid.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+
+                                    OutlinedButton(
+                                        onClick = { openExternalLink(PLACEHOLDER_GITHUB_URL) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = outlinedButtonColors,
+                                        border = buttonBorder,
+                                    ) {
+                                        Text("GitHub profile")
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = { openExternalLink(PLACEHOLDER_CONTACT_URL) },
+                                            modifier = Modifier.weight(1f),
+                                            colors = outlinedButtonColors,
+                                            border = buttonBorder,
+                                        ) {
+                                            Text("Contact")
+                                        }
+
+                                        Button(
+                                            onClick = { openExternalLink(PLACEHOLDER_DONATE_URL) },
+                                            modifier = Modifier.weight(1f),
+                                            colors = activeButtonColors,
+                                        ) {
+                                            Text("Donate")
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getAppVersionName(): String {
+        return try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "-"
+        } catch (_: Exception) {
+            "-"
+        }
+    }
+
+    private fun openExternalLink(url: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
 
@@ -768,7 +905,6 @@ class MainActivity : ComponentActivity() {
         (application as SetaMobileApplication).container.cameraEngine.detachPreviewView()
     }
 }
-
 
 @Composable
 private fun OverlayPreviewStack(
@@ -845,8 +981,6 @@ private fun OverlayDepthButton(
         Text(text = text, style = MaterialTheme.typography.labelMedium)
     }
 }
-
-
 
 @Composable
 private fun CompactOptionsLine(
@@ -1007,7 +1141,6 @@ private fun shortWhiteBalanceModeLabel(mode: String): String {
             .take(8)
     }
 }
-
 
 private fun loadOverlayBitmap(filePath: String): ImageBitmap? {
     val bounds = BitmapFactory.Options().apply {
