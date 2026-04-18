@@ -14,6 +14,8 @@ import androidx.activity.viewModels
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -49,6 +50,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -116,6 +118,7 @@ class MainActivity : ComponentActivity() {
             var cameraMenuOpen by remember { mutableStateOf(false) }
             var rotationLockEnabled by remember { mutableStateOf(initialRotationLockEnabled) }
             var serverActionPending by remember { mutableStateOf(false) }
+            var capturePending by remember { mutableStateOf(false) }
             var previewProfilePendingId by remember { mutableStateOf<String?>(null) }
             var focusDistanceDraft by remember { mutableFloatStateOf(state.currentFocusDistance ?: 0f) }
             var isoDraft by remember { mutableFloatStateOf(state.currentIso?.toFloat() ?: state.isoMin ?: 100f) }
@@ -128,6 +131,27 @@ class MainActivity : ComponentActivity() {
                         ?: state.whiteBalanceTemperatureMin
                         ?: 5600f,
                 )
+            }
+
+            val focusSliderInteractionSource = remember { MutableInteractionSource() }
+            val isoSliderInteractionSource = remember { MutableInteractionSource() }
+            val exposureSliderInteractionSource = remember { MutableInteractionSource() }
+            val whiteBalanceTempSliderInteractionSource = remember { MutableInteractionSource() }
+
+            val isFocusSliderDragged by focusSliderInteractionSource.collectIsDraggedAsState()
+            val isIsoSliderDragged by isoSliderInteractionSource.collectIsDraggedAsState()
+            val isExposureSliderDragged by exposureSliderInteractionSource.collectIsDraggedAsState()
+            val isWhiteBalanceTempSliderDragged by whiteBalanceTempSliderInteractionSource.collectIsDraggedAsState()
+
+            val cameraMenuAlpha = if (
+                isFocusSliderDragged ||
+                isIsoSliderDragged ||
+                isExposureSliderDragged ||
+                isWhiteBalanceTempSliderDragged
+            ) {
+                0.25f
+            } else {
+                1f
             }
 
             val activeButtonColors = ButtonDefaults.buttonColors(
@@ -153,6 +177,10 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(state.serverRunning, state.lastError) {
                 serverActionPending = false
+            }
+
+            LaunchedEffect(state.lastCaptureId, state.lastError) {
+                capturePending = false
             }
 
             LaunchedEffect(state.previewProfileId, state.lastError) {
@@ -297,29 +325,16 @@ class MainActivity : ComponentActivity() {
                                         .verticalScroll(rememberScrollState()),
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = if (state.serverRunning) "Server running" else "Server stopped",
-                                            style = MaterialTheme.typography.titleMedium,
-                                        )
-
-                                        OutlinedButton(
-                                            onClick = { serverMenuOpen = false },
-                                            modifier = Modifier.heightIn(min = 32.dp),
-                                            colors = outlinedButtonColors,
-                                            border = buttonBorder,
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                        ) {
-                                            Text("Close")
-                                        }
-                                    }
+                                    Text(
+                                        text = if (state.serverRunning) "Server running" else "Server stopped",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
 
                                     Text("IP: ${state.ipAddress ?: "unknown"}")
                                     Text("Port: ${state.port}")
+                                    Text("URL: ${state.baseUrl ?: "-"}")
+                                    Text("Camera open: ${state.cameraOpen}")
+                                    Text("Active lens: ${state.activeLensId ?: "-"}")
 
                                     state.lastCaptureId?.takeIf { it.isNotBlank() }?.let {
                                         Text("Last capture: $it")
@@ -355,6 +370,19 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
 
+                                    OutlinedButton(
+                                        onClick = {
+                                            capturePending = true
+                                            viewModel.onCaptureClicked()
+                                        },
+                                        enabled = !capturePending,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = outlinedButtonColors,
+                                        border = buttonBorder,
+                                    ) {
+                                        Text(if (capturePending) "Capturing..." else "Capture (debug)")
+                                    }
+
                                     Text(
                                         text = "Preview profile",
                                         style = MaterialTheme.typography.titleSmall,
@@ -363,7 +391,6 @@ class MainActivity : ComponentActivity() {
                                     state.availablePreviewProfiles.forEach { profile ->
                                         val isSelected = profile.id == state.previewProfileId
                                         val isPending = previewProfilePendingId == profile.id
-                                        val label = displayPreviewProfileLabel(profile.label)
 
                                         if (isSelected) {
                                             Button(
@@ -374,9 +401,9 @@ class MainActivity : ComponentActivity() {
                                             ) {
                                                 Text(
                                                     if (isPending) {
-                                                        "$label (applying...)"
+                                                        "${profile.label} (applying...)"
                                                     } else {
-                                                        label
+                                                        "${profile.label} (active)"
                                                     },
                                                 )
                                             }
@@ -393,13 +420,27 @@ class MainActivity : ComponentActivity() {
                                             ) {
                                                 Text(
                                                     if (isPending) {
-                                                        "$label (applying...)"
+                                                        "${profile.label} (applying...)"
                                                     } else {
-                                                        label
+                                                        profile.label
                                                     },
                                                 )
                                             }
                                         }
+                                    }
+
+                                    Text(
+                                        text = "Higher quality increases latency and CPU/network usage.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+
+                                    OutlinedButton(
+                                        onClick = { serverMenuOpen = false },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = outlinedButtonColors,
+                                        border = buttonBorder,
+                                    ) {
+                                        Text("Close")
                                     }
                                 }
                             }
@@ -410,7 +451,8 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .padding(12.dp)
-                                    .widthIn(min = 300.dp, max = 380.dp),
+                                    .widthIn(min = 300.dp, max = 380.dp)
+                                    .alpha(cameraMenuAlpha),
                                 colors = panelColors,
                             ) {
                                 Column(
@@ -420,26 +462,10 @@ class MainActivity : ComponentActivity() {
                                         .verticalScroll(rememberScrollState()),
                                     verticalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            text = "Camera Setup",
-                                            style = MaterialTheme.typography.titleMedium,
-                                        )
-
-                                        OutlinedButton(
-                                            onClick = { cameraMenuOpen = false },
-                                            modifier = Modifier.heightIn(min = 32.dp),
-                                            colors = outlinedButtonColors,
-                                            border = buttonBorder,
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                        ) {
-                                            Text("Close")
-                                        }
-                                    }
+                                    Text(
+                                        text = "Camera Setup",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -465,6 +491,11 @@ class MainActivity : ComponentActivity() {
                                     Text(
                                         text = "Overlay history: ${state.overlayHistoryCount}",
                                         style = MaterialTheme.typography.bodyMedium,
+                                    )
+
+                                    Text(
+                                        text = state.activeOverlayLabel ?: "No Blender captures available yet",
+                                        style = MaterialTheme.typography.bodySmall,
                                     )
 
                                     Text("Mode", style = MaterialTheme.typography.bodyMedium)
@@ -554,28 +585,62 @@ class MainActivity : ComponentActivity() {
                                     }
 
                                     if (state.availableLensIds.isNotEmpty()) {
-                                        CompactOptionsLine(
-                                            title = "Lens",
-                                            options = state.availableLensIds,
-                                            selectedOption = state.activeLensId,
-                                            onOptionSelected = viewModel::onLensSelected,
-                                        )
+                                        Text("Lens", style = MaterialTheme.typography.titleSmall)
+
+                                        state.availableLensIds.forEach { lensId ->
+                                            val isActive = lensId == state.activeLensId
+                                            if (isActive) {
+                                                Button(
+                                                    onClick = { },
+                                                    enabled = false,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = activeButtonColors,
+                                                ) {
+                                                    Text("$lensId (active)")
+                                                }
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = { viewModel.onLensSelected(lensId) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = outlinedButtonColors,
+                                                    border = buttonBorder,
+                                                ) {
+                                                    Text(lensId)
+                                                }
+                                            }
+                                        }
                                     }
 
                                     if (state.availableCameraSettings.containsKey("focus_mode")) {
-                                        CompactOptionsLine(
-                                            title = "Focus mode",
-                                            options = state.availableFocusModes,
-                                            selectedOption = state.currentFocusMode,
-                                            onOptionSelected = viewModel::onFocusModeSelected,
-                                        )
+                                        Text("Focus mode", style = MaterialTheme.typography.titleSmall)
+
+                                        state.availableFocusModes.forEach { mode ->
+                                            val isActive = mode == state.currentFocusMode
+                                            if (isActive) {
+                                                Button(
+                                                    onClick = { },
+                                                    enabled = false,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = activeButtonColors,
+                                                ) {
+                                                    Text("$mode (active)")
+                                                }
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = { viewModel.onFocusModeSelected(mode) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = outlinedButtonColors,
+                                                    border = buttonBorder,
+                                                ) {
+                                                    Text(mode)
+                                                }
+                                            }
+                                        }
                                     }
 
                                     if (state.availableCameraSettings.containsKey("focus_distance")) {
-                                        Text(
-                                            text = "Focus: ${String.format(Locale.US, "%.2f", focusDistanceDraft)}",
-                                            style = MaterialTheme.typography.titleSmall,
-                                        )
+                                        Text("Focus distance", style = MaterialTheme.typography.titleSmall)
+                                        Text(String.format(Locale.US, "%.2f", focusDistanceDraft))
 
                                         Slider(
                                             value = focusDistanceDraft,
@@ -584,6 +649,7 @@ class MainActivity : ComponentActivity() {
                                             onValueChangeFinished = {
                                                 viewModel.onFocusDistanceChanged(focusDistanceDraft)
                                             },
+                                            interactionSource = focusSliderInteractionSource,
                                         )
                                     }
 
@@ -616,14 +682,30 @@ class MainActivity : ComponentActivity() {
                                     }
 
                                     if (state.availableCameraSettings.containsKey("white_balance_mode")) {
-                                        CompactOptionsGrid(
-                                            title = "WB mode",
-                                            options = state.availableWhiteBalanceModes,
-                                            selectedOption = state.currentWhiteBalanceMode,
-                                            onOptionSelected = viewModel::onWhiteBalanceModeSelected,
-                                            labelFor = ::shortWhiteBalanceModeLabel,
-                                            itemsPerRow = 4,
-                                        )
+                                        Text("White balance mode", style = MaterialTheme.typography.titleSmall)
+
+                                        state.availableWhiteBalanceModes.forEach { mode ->
+                                            val isActive = mode == state.currentWhiteBalanceMode
+                                            if (isActive) {
+                                                Button(
+                                                    onClick = { },
+                                                    enabled = false,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = activeButtonColors,
+                                                ) {
+                                                    Text("$mode (active)")
+                                                }
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = { viewModel.onWhiteBalanceModeSelected(mode) },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = outlinedButtonColors,
+                                                    border = buttonBorder,
+                                                ) {
+                                                    Text(mode)
+                                                }
+                                            }
+                                        }
                                     }
 
                                     if (
@@ -632,10 +714,8 @@ class MainActivity : ComponentActivity() {
                                         isoMax != null &&
                                         isoMax > isoMin
                                     ) {
-                                        Text(
-                                            text = "ISO: ${isoDraft.toInt()}",
-                                            style = MaterialTheme.typography.titleSmall,
-                                        )
+                                        Text("ISO", style = MaterialTheme.typography.titleSmall)
+                                        Text(isoDraft.toInt().toString())
 
                                         Slider(
                                             value = isoDraft.coerceIn(isoMin, isoMax),
@@ -646,6 +726,7 @@ class MainActivity : ComponentActivity() {
                                             onValueChangeFinished = {
                                                 viewModel.onIsoChanged(isoDraft)
                                             },
+                                            interactionSource = isoSliderInteractionSource,
                                         )
                                     }
 
@@ -655,10 +736,8 @@ class MainActivity : ComponentActivity() {
                                         exposureTimeMax != null &&
                                         exposureTimeMax > exposureTimeMin
                                     ) {
-                                        Text(
-                                            text = "Exposure: ${String.format(Locale.US, "%.6f s", exposureTimeDraft)}",
-                                            style = MaterialTheme.typography.titleSmall,
-                                        )
+                                        Text("Exposure time", style = MaterialTheme.typography.titleSmall)
+                                        Text(String.format(Locale.US, "%.6f s", exposureTimeDraft))
 
                                         Slider(
                                             value = exposureTimeDraft.coerceIn(exposureTimeMin, exposureTimeMax),
@@ -669,6 +748,7 @@ class MainActivity : ComponentActivity() {
                                             onValueChangeFinished = {
                                                 viewModel.onExposureTimeChanged(exposureTimeDraft)
                                             },
+                                            interactionSource = exposureSliderInteractionSource,
                                         )
                                     }
 
@@ -678,10 +758,8 @@ class MainActivity : ComponentActivity() {
                                         whiteBalanceTemperatureMax != null &&
                                         whiteBalanceTemperatureMax > whiteBalanceTemperatureMin
                                     ) {
-                                        Text(
-                                            text = "WB Temp: ${whiteBalanceTemperatureDraft.toInt()} K",
-                                            style = MaterialTheme.typography.titleSmall,
-                                        )
+                                        Text("White balance temperature", style = MaterialTheme.typography.titleSmall)
+                                        Text("${whiteBalanceTemperatureDraft.toInt()} K")
 
                                         Slider(
                                             value = whiteBalanceTemperatureDraft.coerceIn(
@@ -700,6 +778,7 @@ class MainActivity : ComponentActivity() {
                                                     whiteBalanceTemperatureDraft,
                                                 )
                                             },
+                                            interactionSource = whiteBalanceTempSliderInteractionSource,
                                         )
                                     }
 
@@ -708,6 +787,15 @@ class MainActivity : ComponentActivity() {
                                             text = "Error: $error",
                                             color = MaterialTheme.colorScheme.error,
                                         )
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { cameraMenuOpen = false },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = outlinedButtonColors,
+                                        border = buttonBorder,
+                                    ) {
+                                        Text("Close")
                                     }
                                 }
                             }
@@ -832,169 +920,6 @@ private fun OverlayDepthButton(
         Text(text = text, style = MaterialTheme.typography.labelMedium)
     }
 }
-
-
-
-@Composable
-private fun CompactOptionsLine(
-    title: String,
-    options: List<String>,
-    selectedOption: String?,
-    onOptionSelected: (String) -> Unit,
-    labelFor: (String) -> String = { it },
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-        )
-
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            options.forEach { option ->
-                CompactMenuButton(
-                    text = labelFor(option),
-                    selected = option == selectedOption,
-                    onClick = { onOptionSelected(option) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactOptionsGrid(
-    title: String,
-    options: List<String>,
-    selectedOption: String?,
-    onOptionSelected: (String) -> Unit,
-    labelFor: (String) -> String = { it },
-    itemsPerRow: Int = 4,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-        )
-
-        options.chunked(itemsPerRow).forEach { rowOptions ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                rowOptions.forEach { option ->
-                    CompactMenuButton(
-                        text = labelFor(option),
-                        selected = option == selectedOption,
-                        onClick = { onOptionSelected(option) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactMenuButton(
-    text: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val activeColors = ButtonDefaults.buttonColors(
-        containerColor = Color(0xFFF9F9F9),
-        contentColor = Color(0xFF4D4D4D),
-        disabledContainerColor = Color(0xFFDADDDE),
-        disabledContentColor = Color(0xFF4D4D4D),
-    )
-
-    val outlinedColors = ButtonDefaults.outlinedButtonColors(
-        containerColor = Color(0xFFE5E7E7),
-        contentColor = Color(0xFF4D4D4D),
-        disabledContainerColor = Color(0xFFDADDDE),
-        disabledContentColor = Color(0xFF4D4D4D),
-    )
-
-    val border = BorderStroke(1.dp, Color(0xFF4D4D4D))
-
-    if (selected) {
-        Button(
-            onClick = { },
-            enabled = false,
-            modifier = modifier.heightIn(min = 34.dp),
-            colors = activeColors,
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-        ) {
-            Text(text)
-        }
-    } else {
-        OutlinedButton(
-            onClick = onClick,
-            modifier = modifier.heightIn(min = 34.dp),
-            colors = outlinedColors,
-            border = border,
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-        ) {
-            Text(text)
-        }
-    }
-}
-
-private fun displayPreviewProfileLabel(label: String): String {
-    val normalized = label
-        .replace("(experimental)", "", ignoreCase = true)
-        .trim()
-        .lowercase(Locale.US)
-
-    return when (normalized) {
-        "muy alta" -> "Very High"
-        "alta" -> "High"
-        "media" -> "Medium"
-        "baja" -> "Low"
-        else -> normalized
-            .split(" ")
-            .filter { it.isNotBlank() }
-            .joinToString(" ") { word ->
-                word.replaceFirstChar { ch -> ch.titlecase(Locale.US) }
-            }
-    }
-}
-
-private fun shortWhiteBalanceModeLabel(mode: String): String {
-    val normalized = mode.trim().lowercase(Locale.US)
-
-    return when {
-        normalized == "auto" || normalized.contains("auto") -> "AWB"
-        normalized.contains("daylight") || normalized == "day" -> "Day"
-        normalized.contains("cloud") -> "Cloud"
-        normalized.contains("shade") -> "Shade"
-        normalized.contains("tung") || normalized.contains("incan") -> "Tung"
-        normalized.contains("fluo") -> "Fluo"
-        normalized.contains("flash") -> "Flash"
-        normalized.contains("twilight") -> "Twil"
-        normalized.contains("warm") -> "Warm"
-        else -> mode
-            .replace("_", " ")
-            .trim()
-            .split(" ")
-            .filter { it.isNotBlank() }
-            .joinToString(" ") { it.replaceFirstChar { ch -> ch.titlecase(Locale.US) } }
-            .take(8)
-    }
-}
-
 
 private fun loadOverlayBitmap(filePath: String): ImageBitmap? {
     val bounds = BitmapFactory.Options().apply {
