@@ -876,8 +876,8 @@ class CameraXEngine(
         setOption(CaptureRequest.CONTROL_AF_MODE as CaptureRequest.Key<Any>, afMode)
 
         if (currentFocusMode == FocusModeIds.MANUAL && support.supportsManualFocusDistance) {
-            val minDistance = support.focusDistanceMax?.toFloat() ?: 0f
-            val rawDistance = (currentFocusDistanceNormalized.coerceIn(0f, 1f)) * minDistance
+            val maxDistance = support.focusDistanceMax?.toFloat() ?: 0f
+            val rawDistance = currentFocusDistanceNormalized.coerceIn(0f, 1f) * maxDistance
 
             @Suppress("UNCHECKED_CAST")
             setOption(CaptureRequest.LENS_FOCUS_DISTANCE as CaptureRequest.Key<Any>, rawDistance)
@@ -1002,7 +1002,7 @@ class CameraXEngine(
             focusModeChoices = focusChoices,
             supportsManualFocusDistance = minFocusDistance > 0f,
             focusDistanceMin = 0.0,
-            focusDistanceMax = if (minFocusDistance > 0f) 1.0 else null,
+            focusDistanceMax = if (minFocusDistance > 0f) minFocusDistance.toDouble() else null,
             aeLockSupported = aeLockSupported,
             awbLockSupported = awbLockSupported,
             whiteBalanceModeChoices = whiteBalanceChoices,
